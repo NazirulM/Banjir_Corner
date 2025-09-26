@@ -1,8 +1,7 @@
-
-
 import streamlit as st
 import pandas as pd
 import datetime
+import psycopg2
 
 # --- App Configuration ---
 st.set_page_config(
