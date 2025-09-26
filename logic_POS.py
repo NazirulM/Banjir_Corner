@@ -12,8 +12,13 @@ def setup_session_state():
     """Initializes session state variables if they don't exist."""
     if "current_order" not in st.session_state:
         st.session_state.current_order = []
-    if 'last_status_check' not in st.session_state:
-        st.session_state.last_status_check = None
+    # Removed last_status_check as it's no longer needed for automatic status display
+    if 'view_state' not in st.session_state:
+        st.session_state.view_state = 'menu' # New state: 'menu', 'checkout', or 'status'
+    if 'submitted_order_id' not in st.session_state:
+        st.session_state.submitted_order_id = None 
+    if 'create_new_order' not in st.session_state:
+        st.session_state.create_new_order = False
 
 def add_to_order(item, price, quantity):
     """Adds an item with specified quantity to the current order (in session state)."""
@@ -23,17 +28,49 @@ def add_to_order(item, price, quantity):
     st.session_state.current_order.append({'Item': item, 'Kuantiti': quantity, 'Harga': price, 'Subtotal': price * quantity})
     st.success(f"{quantity} x {item} ditambah ke dalam pesanan.")
 
+def remove_from_order(item_index):
+    """Removes an item from the current order based on its index."""
+    if 0 <= item_index < len(st.session_state.current_order):
+        # Remove the item at the specified index
+        del st.session_state.current_order[item_index]
+        # Force a rerun to immediately update the visible basket and total
+        st.rerun()
+
 def submit_order(order_id, dine_option):
     """Submits the current order from session state to the database."""
     if not st.session_state.current_order:
         st.error("Ralat: pesanan tidak boleh dibiarkan kosong.")
         return
+    
+    # The view_state is set to the order_id in UI_POS before calling this function
     if insert_new_order(order_id, dine_option, st.session_state.current_order):
+        # Clear basket
         st.session_state.current_order = []
+        # Set the order ID for the status view and switch view state
+        # The submitted_order_id is already set in UI_POS before calling this function
         st.audio(DING_SOUND, format="audio/wav", autoplay=True)
-        st.success(f"Pesanan {order_id} telah berjaya dimasukkan! Sila tunggu, pesanan anda sedang diproses.")
-        # Force a rerun to clear the form and reflect the new order status
+        # Force a rerun to switch to the order status view
         st.rerun()
+
+def close_sidebar_on_mobile():
+    """
+    Injects reliable JavaScript to simulate a click on the sidebar collapse button, 
+    ensuring the sidebar is hidden after selection.
+    """
+    # This targets the button by its stable ARIA label: 'Collapse'
+    js_code = """
+    <script>
+        try {
+            var button = window.parent.document.querySelector('button[aria-label="Collapse"]');
+            if (button) {
+                button.click();
+            }
+        } catch (e) {
+            // Error handling is necessary for component execution safety
+        }
+    </script>
+    """
+    st.components.v1.html(js_code, height=0, width=0)
 
 def update_order_status(order_id, new_status):
     """Updates the status of an order in the database."""

@@ -13,7 +13,7 @@ st.set_page_config(
     page_title="Food Stall POS",
     page_icon="🍔",
     layout="wide",
-    initial_sidebar_state="expanded",
+    #initial_sidebar_state="expanded",
 )
 
 #st.write(st.secrets)
@@ -21,14 +21,23 @@ st.set_page_config(
 # --- Main App Function ---
 def run_app():
     """Main function to run the Streamlit app based on query parameters."""
-    query_params = st.experimental_get_query_params()
-    user_type = query_params.get("user", ["customer"])[0]
-    table_number = query_params.get("table", [None])[0]
+    # Use the new, stable st.query_params object
+    query_params = st.query_params
+        
+    # Get the 'user' parameter. Use .get() for safe access.
+    # If 'user' is not in the URL, it defaults to None. 
+    # We then use the OR operator to default to 'customer' if it's None.
+    user_type = query_params.get("user") or "customer" 
+        
+    # Get the 'table' parameter. .get() safely returns the string value or None.
+    # No need for [0] as the value is a string, not a list.
+    table_number = query_params.get("table")
 
     # Initialize session state for the current order
     setup_session_state()
         
-    st.title("🍔 Aplikasi Pengurusan Gerai Makanan")
+    st.title("🍔 Banjir Corner")
+
     st.markdown("---")
 
     if user_type == "employee":
