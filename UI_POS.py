@@ -2,20 +2,81 @@ import streamlit as st
 import pandas as pd
 import datetime
 import time
-# Ensure remove_from_order is imported (as per previous steps)
 from logic_POS import add_to_order, submit_order, update_order_status, update_payment_status, setup_session_state, remove_from_order
 from db_POS import get_orders_from_db, get_single_order_from_db
+from streamlit import components
 
-# --- Data & Menu ---
+# --- Data & Menu (Updated for Configuration) ---
 MENU = {
     "makanan": {
-        "Lamb Chop": 17.00,
-        "Chicken Chop": 6.00,
-        "Chicken Grilled": 12.00,
-        "Spaghetti Bolognese": 6.00,
-        "Spaghetti Carbonara": 6.00,
-        "Fries": 4.00,
-        "Fish N Chip": 7.00
+        "Mi Bandung": {
+            "base_price": 8.00,
+            "variants": {
+                "label": "Jenis Mi Bandung",
+                "type": "radio",
+                "options": {"Biasa": 0.00, "Ayam": 2.00, "Daging": 2.00, "Kerang": 2.00, "Special": 5.00}, # Price is the cost ADDED to the base_price
+                "required": True,
+            },
+            "addons": {
+                "label": "Add-Ons (Optional)",
+                "type": "multiselect",
+                "options": {"Extra Telur": 1.00, "Extra Mi": 1.00, "Extra Protein": 2.00},
+                "required": False,
+            }
+        },
+        "Sup": {
+            "base_price": 7.00,
+            "variants": {
+                "label": "Jenis Sup",
+                "type": "radio",
+                "options": {"Ayam": 2.00, "Daging": 2.00, "tetel": 2.00, "kambing": 2.00, "gearbox": 10.00}, # Price is the cost ADDED to the base_price
+                "required": True,
+            },
+            "addons": {
+                "label": "Add-Ons",
+                "type": "multiselect",
+                "options": {"Bihun": 1.00, "Nasi Putih": 1.00, "Nasi Impit": 1.00, "Mi Kuning": 1.00,
+                            "Ayam": 2.00, "Daging": 2.00, "tetel": 2.00, "kambing": 2.00, "gearbox": 10.00},
+                "required": False
+            }
+        },
+        "Bakso": {
+            "base_price": 6.00,
+            "variants": {
+                "label": "Jenis Bakso",
+                "type": "radio",
+                "options": {"Biasa": 0.00, "Ayam": 2.00, "Daging": 2.00, "tetel": 2.00, "kambing": 2.00, "gearbox": 10.00}, # Price is the cost ADDED to the base_price
+                "required": True
+            },
+            "addons": {
+                "label": "Add-Ons (Optional)",
+                "type": "multiselect",
+                "options": {"Sayur": 0.50, "Kentang": 0.50},
+                "required": False
+            }
+        },
+        "Chicken Chop": {
+            "base_price": 7.00,
+            "addons": {
+                "label": "Add-Ons",
+                "type": "multiselect",
+                "options": {"Nasi Putih": 1.00, "Cheese": 1.00},
+                "required": False
+            }
+        },
+        "Lamb Chop": {
+            "base_price": 17.00,
+            "addons": {
+                "label": "Add-Ons",
+                "type": "multiselect",
+                "options": {"Nasi Putih": 1.00},
+                "required": False
+            }
+        },
+        "Grilled Chicken Chop": 13.00,
+        "French Fries": 5.00,
+        "Spaghetti Bolognese": 7.00,
+        "Spaghetti Carbonara": 7.00,
     },
     "minuman": {
         "Teh O Ais": 3.00,
@@ -25,23 +86,286 @@ MENU = {
     }
 }
 
+
+
 PAYMENT_METHODS = ["Tunai", "DuitNow QR Pay", "TnG Online Transfer"]
 
-def render_menu_category(category_name, menu_items, table_number):
-    """Renders the menu for a specific category."""
-    st.subheader(f"{category_name.capitalize()}")
-    for item, price in menu_items.items():
-        # Use a unique key based on item and table number/category for consistent state
-        unique_key = f"qty_{item}_{table_number}_{category_name}" 
+
+# --- General Helper Functions ---
+
+def get_menu_item_details(category, item_name):
+    """Safely retrieves the item's configuration dict or base price."""
+    item_data = MENU.get(category, {}).get(item_name)
+    
+    if isinstance(item_data, dict):
+        base_price = item_data.get("base_price", 0.00)
+        is_configurable = True
+    else:
+        base_price = item_data
+        is_configurable = False
         
-        col_item_name, col_item_qty, col_add_btn = st.columns([2, 1, 1])
+    return base_price, is_configurable, item_data
+
+def finalize_configuration(item_data, quantity, key_to_reset, remarks_text):
+    """Handles submission, calculates final price, and adds the custom item to order."""
+    
+    base_item = item_data['name']
+    base_price = item_data['base_price']
+    
+    final_price = base_price
+    config_details = []
+    
+    # 1. Process Variants and Add-ons dynamically
+    config_settings = get_menu_item_details(item_data['category'], base_item)[2]
+
+    # Check Requirements and Calculate Price
+    required_variant_selected = True
+    
+    for key, config in config_settings.items():
+        if key in ['variants', 'addons']:
+            session_key = f"{base_item}_{key}_selection" 
+            selection = st.session_state.get(session_key)
+
+            if config.get('required') and not selection:
+                required_variant_selected = False
+                st.error(f"Sila pilih satu dari {config['label']}.")
+                break
+            
+            if selection:
+                if config['type'] == 'radio':
+                    # Variant (single selection)
+                    final_price += config['options'][selection]
+                    config_details.append(selection)
+                elif config['type'] == 'multiselect':
+                    # Add-ons (multiple selection)
+                    for add_on in selection:
+                        final_price += config['options'][add_on]
+                        config_details.append(add_on)
+
+    if not required_variant_selected:
+        return
+
+    # 2. Final Item Name
+    customized_item_name = f"{base_item}"
+    if config_details:
+        customized_item_name += f" ({', '.join(config_details)})"
+    
+    # 3. Add to Order and Clear State
+    # 🚀 CRITICAL: Pass remarks_text to add_to_order 🚀
+    add_to_order(customized_item_name, final_price, quantity, remarks_text)
+    
+    # Clear all configuration-related state keys for the next item
+    # Since we are using an open remarks field, we should also clear its state key
+    remarks_key = f"{item_data['name']}_remarks"
+    if remarks_key in st.session_state:
+        del st.session_state[remarks_key]
+        
+    st.session_state[key_to_reset] = 0
+    st.session_state.item_to_configure = None 
+    st.rerun()
+
+def calculate_current_cost(item_name, base_price, config_settings):
+    """Calculates the current cost based on selections stored in st.session_state."""
+    current_cost = base_price
+
+    if config_settings:
+        for key, config in config_settings.items():
+            if key in ['variants', 'addons']:
+                session_key = f"{item_name}_{key}_selection"
+                selection = st.session_state.get(session_key)
+
+                if selection:
+                    if config['type'] == 'radio':
+                        # Variant (single selection)
+                        # Selection is the string name, use it to look up the price
+                        current_cost += config['options'].get(selection, 0)
+                    elif config['type'] == 'multiselect':
+                        # Add-ons (multiple selection)
+                        for add_on in selection:
+                            # Selection is a list of string names
+                            current_cost += config['options'].get(add_on, 0)
+    return current_cost
+
+
+def show_item_config(item_data):
+    """Renders a reusable, dynamic configuration pop-up for any complex item."""
+    
+    item_name = item_data['name']
+    base_price = item_data['base_price']
+    quantity = item_data['quantity']
+    key_to_reset = item_data['key_to_reset']
+    category = item_data['category']
+    
+    config_settings = get_menu_item_details(category, item_name)[2]
+
+    remarks_key = f"{item_name}_remarks" 
+    
+    # CRITICAL FIX: Removed st.form() and replaced it with st.container()
+    with st.container(border=True):
+        st.subheader(f"Customize your {item_name}")
+        
+        # --- Dynamically Render Variants and Add-ons ---
+        
+        if config_settings:
+            for key, config in config_settings.items():
+                if key in ['variants', 'addons']:
+                    st.markdown("---")
+                    st.markdown(f"##### **{config['label']}**")
+                    
+                    price_options = config['options']
+                    price_str = ", ".join([f"{opt} (+RM{price:.2f})" for opt, price in price_options.items()])
+                    st.caption(f"Pilihan Harga: {price_str}")
+                    
+                    session_key = f"{item_name}_{key}_selection" 
+                    
+                    # Ensure selection key is initialized for the first render
+                    if session_key not in st.session_state:
+                        st.session_state[session_key] = None if config['type'] == 'radio' else []
+
+                    if config['type'] == 'radio' and config.get('required'):
+                        # Variants (Required Radio Button)
+                        st.radio(
+                            config['label'],
+                            list(price_options.keys()),
+                            index=None,
+                            key=session_key,
+                            label_visibility="collapsed"
+                        )
+                        
+                    elif config['type'] == 'multiselect':
+                        # Add-ons (Optional Multiselect)
+                        st.multiselect(
+                            config['label'],
+                            list(price_options.keys()),
+                            key=session_key,
+                            # Default is handled by the initial state setup above
+                            label_visibility="collapsed"
+                        )
+        
+        # 🚀 START: NEW REMARKS FIELD 🚀
+        st.markdown("---")
+        st.markdown("##### **Nota Khas/Permintaan (Pilihan)**")
+        st.text_area(
+            "Sila masukkan permintaan khas anda di sini (e.g., Kurang Pedas, Taknak Sayur)",
+            key=remarks_key,
+            height=70,
+            label_visibility="collapsed"
+        )
+        # 🚀 END: NEW REMARKS FIELD 🚀
+        
+        # --- Dynamic Price Estimation (This now reruns with the app state) ---
+        
+        # Calculation is called here:
+        current_cost = calculate_current_cost(item_name, base_price, config_settings)
+        
+        st.markdown("---")
+        st.metric(label="Anggaran Harga per Unit", value=f"RM{current_cost:.2f}")
+
+        # --- Submission Buttons (Now use regular st.button) ---
+        col_submit, col_cancel = st.columns(2)
+        
+        with col_submit:
+            # Check requirements manually before finalizing
+            is_valid = True
+            for key, config in config_settings.items():
+                if key == 'variants' and config.get('required'):
+                    session_key = f"{item_name}_{key}_selection" 
+                    if not st.session_state.get(session_key):
+                        is_valid = False
+                        st.error("Sila pilih satu varian yang wajib (Mandatory Variant).")
+                        break # Stop checking if mandatory variant is missing
+            
+            if st.button("✅ Sahkan Pesanan", use_container_width=True, disabled=not is_valid):
+                # The finalize function validates and adds the item
+                finalize_configuration(item_data, quantity, key_to_reset, remarks_key)
+        
+        with col_cancel:
+            if st.button("❌ Batal Pesanan", type="secondary", use_container_width=True):
+                st.session_state[key_to_reset] = 0
+                st.session_state.item_to_configure = None
+                st.rerun() 
+
+# --- Helper Functions (Remaining functions are unchanged) ---
+
+def quantity_changed(item_name, category, unique_key):
+    """
+    Handles changes in the st.number_input for an item.
+    Either triggers configuration or adds the item directly.
+    """
+    
+    current_qty = st.session_state[unique_key]
+    
+    # Do nothing if quantity is zero (or reset to zero)
+    if current_qty == 0:
+        return
+        
+    base_price, is_configurable, _ = get_menu_item_details(category, item_name)
+
+    if is_configurable:
+        # Trigger configuration pop-up for complex items
+        st.session_state.item_to_configure = {
+            'name': item_name,
+            'base_price': base_price,
+            'quantity': current_qty,
+            'key_to_reset': unique_key,
+            'category': category
+        }
+        # Reset the quantity input so the item doesn't look like it's already added
+        st.session_state[unique_key] = 0 
+    else:
+        # 🚀 CRITICAL FIX: Add simple item directly, passing an empty string for remarks
+        if current_qty > 0:
+            add_to_order(item_name, base_price, current_qty, "") # Pass "" for remarks
+            st.session_state[unique_key] = 0 # Reset input after adding
+
+def get_total_item_quantity(base_item):
+    """Calculates the total quantity of a base item (ignoring variations) in the current order."""
+    total_qty = 0
+    if not st.session_state.current_order:
+        return 0
+        
+    for item in st.session_state.current_order:
+        # Check if the item name starts with the base item name (e.g., "Mi Bandung" is the start of "Mi Bandung (Ayam, Telur)")
+        if item['Item'].startswith(base_item):
+            total_qty += item['Kuantiti']
+    return total_qty
+
+def render_menu_category(category_name, menu_items, table_number):
+    """Renders the menu for a specific category using the new quantity/config logic."""
+    st.subheader(f"{category_name.capitalize()}")
+    for item_name in menu_items.keys():
+        
+        base_price, is_configurable, item_data_config = get_menu_item_details(category_name, item_name)
+        
+        unique_key = f"qty_{item_name}_{table_number}_{category_name}" 
+        
+        # Ensure input key is initialized to 0
+        if unique_key not in st.session_state:
+             st.session_state[unique_key] = 0
+             
+        # Get the currently ordered quantity for this item
+        current_ordered_qty = get_total_item_quantity(item_name)
+
+        col_item_name, col_item_qty_input, col_ordered_qty = st.columns([3, 1, 1]) 
+        
         with col_item_name:
-            st.write(f"**{item}** (RM{price:.2f})")
-        with col_item_qty:
-            quantity = st.number_input("Kuantiti", min_value=1, value=1, key=unique_key, label_visibility="collapsed")
-        with col_add_btn:
-            if st.button("Tambah", key=f"btn_{item}_{table_number}_{category_name}"):
-                add_to_order(item, price, quantity)
+            st.write(item_name)
+                
+        with col_item_qty_input:
+            # Min value 0, maintained by session state, and uses the callback
+            st.number_input(
+                "Kuantiti", 
+                min_value=0, 
+                key=unique_key, 
+                on_change=quantity_changed, 
+                args=(item_name, category_name, unique_key), 
+                label_visibility="collapsed"
+            )
+        
+        with col_ordered_qty:
+            # Display the confirmed, added quantity
+            st.markdown(f"<div style='text-align: right; padding-top: 5px;'>**Added: {current_ordered_qty}**</div>", unsafe_allow_html=True)
+
 
 def reset_customer_view_state():
     """Function to clear all customer-related session state keys and return to menu."""
@@ -53,30 +377,28 @@ def reset_customer_view_state():
         del st.session_state.takeaway_order_id
     if 'create_new_order' in st.session_state:
         del st.session_state.create_new_order
+    if 'item_to_configure' in st.session_state:
+        del st.session_state.item_to_configure
+
 
 def display_order_status(order_id_input):
     """Displays the status of the submitted order without elapsed time."""
-    
     st.header("⏳ Status Pesanan Anda")
     
-    # ------------------- Data Fetch and Initial Display -------------------
     with st.spinner(f"Memuatkan status pesanan `{order_id_input}`..."):
-        time.sleep(1) # Delay to show spinner, mimicking network fetch
+        time.sleep(1) 
         order_details = get_single_order_from_db(order_id_input) 
         
     if not order_details:
         st.error(f"Pesanan dengan ID `{order_id_input}` tidak ditemui.")
         st.markdown("---")
-        # Ensure the new order button is available even if the order isn't found
         if st.button("➡️ Buat Pesanan Baru", use_container_width=True):
             st.session_state.create_new_order = True
             st.rerun()
         return
 
-    # Extract data
     status = order_details[3]
 
-    # ------------------- Status and Info Display -------------------
     if status == 'Siap Dihidangkan':
          st.success(f"Status: **{status}**! Sila tunggu kakitangan menghidangkan pesanan anda.")
     elif status == 'Dalam Dapur':
@@ -89,22 +411,25 @@ def display_order_status(order_id_input):
     
     st.markdown("---")
     
-    # ------------------- New Order Option -------------------
     if st.button("➡️ Buat Pesanan Baru", use_container_width=True):
         st.session_state.create_new_order = True
         st.rerun()
 
-# Note: employee_interface will still have the sidebar for login/navigation.
+
+# --- Main Interface ---
 
 def customer_interface(table_number, user_type):
     """Renders the UI for the customer to place an order or view status."""
     setup_session_state()
     
-    # --- CRITICAL State Pre-check: Check if the user requested a NEW order ---
     if st.session_state.get('create_new_order', False):
         reset_customer_view_state() 
     
-    # --- Initialization ---
+    if st.session_state.get('item_to_configure'):
+        show_item_config(st.session_state.item_to_configure)
+        return
+
+    # --- Initialization & Status Check (Unchanged) ---
     is_takeaway_only = user_type == "customer" and not table_number
     if table_number:
         order_id_input = f"MEJA-{table_number}"
@@ -117,30 +442,23 @@ def customer_interface(table_number, user_type):
         order_id_input = st.session_state.takeaway_order_id
         dine_option_default = "Take-Away"
     
-    
-    # Initialize view_state (menu, checkout, or status)
     if 'view_state' not in st.session_state:
         st.session_state.view_state = 'menu'
     
-    # Initialize menu category state
     if 'menu_category' not in st.session_state:
-        st.session_state.menu_category = 'makanan' # Default to food
+        st.session_state.menu_category = 'makanan' 
     
-    
-    # --- ORDER STATUS VIEW CHECK ---
     if st.session_state.get('submitted_order_id') and not st.session_state.get('create_new_order', False):
         display_order_status(st.session_state.submitted_order_id)
         return
         
-    
-    # --- Sidebar (REMOVED ENTIRELY FOR CUSTOMER VIEW) ---
-    # The absence of 'with st.sidebar:' ensures no sidebar is generated.
+    with st.sidebar:
+        pass
             
-    # --- MAIN CONTENT: Checkout State ---
+    # --- MAIN CONTENT: Checkout State (Unchanged) ---
     if st.session_state.view_state == 'checkout' and st.session_state.current_order:
         st.header("🧾 Checkout Pesanan")
         
-        # ... (Checkout content with the Ringkasan Pesanan display) ...
         st.info(f"ID Pesanan: **`{order_id_input}`**")
         if table_number:
             st.info(f"Nombor Meja: **`{table_number}`**")
@@ -148,27 +466,22 @@ def customer_interface(table_number, user_type):
         st.markdown("---")
         st.markdown("### **Ringkasan Pesanan**")
         
-        # --- Display Order Items in a Mobile-Friendly Stacked Layout ---
         for index, item_data in enumerate(st.session_state.current_order):
             
             with st.container(border=True): 
-                # Row 1: Item Name and Quantity
                 col_item_name, col_item_qty = st.columns([4, 2])
                 with col_item_name:
                     st.markdown(f"**{item_data['Item']}**")
                 with col_item_qty:
                     st.write(f"Kuantiti: **{item_data['Kuantiti']}**")
                 
-                # Row 2: Subtotal and Cancel Button
                 col_price, col_cancel = st.columns([4, 2])
                 with col_price:
                     st.subheader(f"RM{item_data['Subtotal']:.2f}")
                 with col_cancel:
-                    # Button to cancel the item, calling the new function
                     if st.button("❌ Batal", key=f"cancel_{index}", use_container_width=True):
                         remove_from_order(index) 
 
-        # Recalculate total after the potential cancellation loop
         if st.session_state.current_order:
             order_df = pd.DataFrame(st.session_state.current_order)
             total_price = order_df['Subtotal'].sum()
@@ -179,9 +492,7 @@ def customer_interface(table_number, user_type):
         st.metric(label="Total Perlu Dibayar", value=f"RM{total_price:.2f}")
         st.markdown("---")
         
-        # --- Form for Submission ---
         with st.form("checkout_form"):
-            # Set dine option based on context
             if is_takeaway_only or dine_option_default == "Take-Away":
                 dine_option = st.selectbox("Pilihan (Wajib)", ["Take-Away"], disabled=True)
             elif dine_option_default == "Dine-In":
@@ -189,36 +500,29 @@ def customer_interface(table_number, user_type):
             else:
                 dine_option = st.selectbox("Pilihan (Wajib)", ["Dine-In", "Take-Away"])
             
-            # Button to submit order (MUST be st.form_submit_button)
             submitted = st.form_submit_button("✅ Hantar Pesanan ke Dapur", use_container_width=True)
             
             if submitted:
                 if dine_option:
-                    # Set the order ID for the status view before submitting
                     st.session_state.submitted_order_id = order_id_input
-                    # This call will st.rerun() in logic_POS
                     submit_order(order_id_input, dine_option) 
                 else:
                     st.error("Sila pilih pilihan 'Dine-In' atau 'Take-Away'.")
-        # --- End of Form ---
 
-        # Button to go back to menu (outside the form)
         if st.button("⬅️ Kembali ke Menu", use_container_width=True):
             st.session_state.view_state = 'menu'
             st.rerun()
 
-    # If the basket is now empty after cancellation, redirect to the menu view
     elif st.session_state.view_state == 'checkout' and not st.session_state.current_order:
         st.session_state.view_state = 'menu'
         st.rerun()
 
     # --- MAIN CONTENT: Menu State ---
-    else: # View state is 'menu' or initial load
+    else: 
         st.header("🛒 Buat Pesanan Baru")
         
-        # Display Info based on context
         if is_takeaway_only:
-            st.warning("Anda kini membuat pesanan **Bawa Pulang**.")
+            # st.warning("Anda kini membuat pesanan **Bawa Pulang**.")
             st.info(f"ID Pesanan: **`{order_id_input}`**")
         elif not table_number:
             st.warning("Sila imbas kod QR meja anda untuk membuat pesanan dine-in.")
@@ -244,27 +548,26 @@ def customer_interface(table_number, user_type):
                 
         st.markdown("---")
         
-        # Display the selected menu category
         selected_category = st.session_state.menu_category
         
-        # Render the menu items
         render_menu_category(selected_category, MENU[selected_category], table_number)
 
-        # Checkout button (still at the bottom of the main menu)
+        # 🚀 START: SIMPLIFIED FOOTER 🚀
         if st.session_state.current_order:
             st.markdown("---")
-            # Display total price near the checkout button for user awareness
+            
+            # Recalculate total for the checkout button help
             order_df = pd.DataFrame(st.session_state.current_order)
             total_price = order_df['Subtotal'].sum()
-            st.metric(label="Total Pesanan", value=f"RM{total_price:.2f}")
+            
+            checkout_label = f"🧾 Checkout Pesanan (RM{total_price:.2f})"
 
-            if st.button("🧾 Checkout Pesanan", key="main_checkout_btn", use_container_width=True):
+            if st.button(checkout_label, key="main_checkout_btn", type="primary", use_container_width=True):
                 st.session_state.view_state = 'checkout'
                 st.rerun()
 
 def employee_interface():
-    """Renders the UI for the employee dashboard."""
-    # ... (Employee interface logic remains unchanged)
+    # (employee_interface content remains unchanged)
     st.sidebar.title("Login Kakitangan")
     password = st.sidebar.text_input("Kata Laluan", type="password")
 
@@ -288,7 +591,6 @@ def employee_interface():
                         st.markdown(f"**Pilihan:** `{order_data['dine_option'].iloc[0]}`")
                         st.markdown(f"**Status:** `{order_data['status'].iloc[0]}`")
                         
-                        # Timezone fix for elapsed time calculation in employee view
                         submitted_at = order_data['submitted_at'].iloc[0].to_pydatetime()
                         if submitted_at.tzinfo is not None and submitted_at.tzinfo.utcoffset(submitted_at) is not None:
                             submitted_at = submitted_at.replace(tzinfo=None)
