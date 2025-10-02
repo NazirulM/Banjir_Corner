@@ -1,17 +1,14 @@
 import streamlit as st
 import pandas as pd
 import datetime
-from UI_POS import customer_interface, employee_interface
+from customer_UI_POS import customer_interface
+from employee_UI_POS import  employee_interface
 from logic_POS import setup_session_state
-import psycopg2
-import toml
-import os
-import sys
 
 # --- App Configuration ---
 st.set_page_config(
     page_title="Food Stall POS",
-    page_icon="🍔",
+    page_icon="🍚",
     layout="wide",
     #initial_sidebar_state="expanded",
 )
@@ -36,7 +33,7 @@ def run_app():
     # Initialize session state for the current order
     setup_session_state()
         
-    st.title("🍔 Banjir Corner")
+    st.title("🍜 Banjir Corner")
 
     st.markdown("---")
 

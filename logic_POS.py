@@ -21,7 +21,7 @@ def setup_session_state():
     if 'item_to_configure' not in st.session_state:
         st.session_state.item_to_configure = None
 
-def add_to_order(item, price, quantity, remarks):
+def add_to_order(item, price, quantity, remarks, configurable = False):
     """Adds an item with specified quantity to the current order (in session state)."""
     if quantity <= 0:
         st.warning("Sila masukkan kuantiti yang sah.")
@@ -32,7 +32,8 @@ def add_to_order(item, price, quantity, remarks):
          'Kuantiti': quantity, 
          'Harga': price, 
          'Subtotal': price * quantity,
-         'Remarks': remarks if remarks else ''
+         'Remarks': remarks if remarks else '',
+         "Configurable": configurable
         })
     #st.success(f"{quantity} x {item} ditambah ke dalam pesanan.")
     # Clear configuration state after successful addition
@@ -44,7 +45,7 @@ def remove_from_order(index):
     """Removes an item from the current order list by index."""
     if 0 <= index < len(st.session_state.current_order):
         del st.session_state.current_order[index]
-        # st.rerun()
+        st.rerun()
 
 def submit_order(order_id, dine_option): 
     """Submits the current order from session state to the database."""
